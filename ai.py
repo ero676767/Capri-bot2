@@ -95,7 +95,7 @@ async def ask_capri(
                 return result
             except errors.APIError as exc:
                 code = getattr(exc, "code", None)
-                log.warning("Erreur Gemini %s sur %s", code, model)
+                log.warning("Erreur Gemini %s sur %s : %s", code, model, exc)
                 if code in (429, 500, 503, 504) and attempt + 1 < config.MAX_RETRIES:
                     await asyncio.sleep(2 * (attempt + 1))
                     continue
