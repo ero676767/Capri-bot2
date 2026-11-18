@@ -53,7 +53,9 @@ bot = CapriBot()
 
 
 def everywhere(func):
-    func = app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)(func)
+    func = app_commands.allowed_contexts(
+        guilds=True, dms=True, private_channels=True
+    )(func)
     func = app_commands.allowed_installs(guilds=True, users=True)(func)
     return func
 
@@ -119,19 +121,24 @@ async def collect_media(attachments):
         if len(parts) >= config.MAX_ATTACHMENTS:
             skipped += 1
             continue
+
         mime = (att.content_type or "").split(";")[0].strip().lower()
         kind = attachment_kind(mime)
+
         if kind is None:
             skipped += 1
             continue
+
         if att.size > limits[kind] or total + att.size > config.MAX_TOTAL_MEDIA_BYTES:
             skipped += 1
             continue
+
         try:
             data = await att.read()
         except discord.HTTPException:
             skipped += 1
             continue
+
         total += len(data)
         mime = config.MIME_FIX.get(mime, mime)
         parts.append((kind, types.Part.from_bytes(data=data, mime_type=mime)))
@@ -165,24 +172,35 @@ async def make_image(user, prompt: str, input_parts):
 
     if result.status == "ok" and result.data:
         db.add_usage(user.id, "image")
-        ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(result.mime, "png")
+        ext = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/webp": "webp",
+        }.get(result.mime, "png")
         return discord.File(io.BytesIO(result.data), filename=f"capri.{ext}"), ""
 
     log.warning("Image non créée : %s", result.status)
+
     messages = {
         "billing": "Je ne peux pas encore créer d'images ici 🥺 (la fonction n'est pas activée chez moi).",
         "model": "Mon atelier d'images est en panne de matériel 🔧 Réessaie plus tard.",
         "blocked": "Je n'ai pas pu créer cette image (elle ne passe pas les règles de sécurité). Essaie de reformuler 🙈",
         "unavailable": "Mon atelier d'images est surchargé, réessaie dans un instant 🎨",
     }
-    return None, messages.get(result.status, "Je n'ai pas réussi à créer cette image, désolée chou 🥺")
+
+    return None, messages.get(
+        result.status,
+        "Je n'ai pas réussi à créer cette image, désolée chou 🥺"
+    )
 
 
 async def build_response(user, text: str, attachments):
     owner = is_owner(user.id)
 
     if not owner and db.get_usage(user.id, "msg") >= config.DAILY_MESSAGE_LIMIT:
-        return ["Tu m'as déjà beaucoup parlé aujourd'hui chou, je dois me reposer 😴 Reviens demain !"], None
+        return [
+            "Tu m'as déjà beaucoup parlé aujourd'hui chou, je dois me reposer 😴 Reviens demain !"
+        ], None
 
     notes = []
     media, counts, skipped = await collect_media(attachments)
@@ -190,30 +208,41 @@ async def build_response(user, text: str, attachments):
     if media and not owner:
         if db.get_usage(user.id, "media") + len(media) > config.DAILY_MEDIA_LIMIT:
             media, counts = [], {"image": 0, "video": 0, "audio": 0}
-            notes.append("(Tu as atteint ta limite de fichiers pour aujourd'hui, je n'ai pas pu les regarder 🙈)")
+            notes.append(
+                "(Tu as atteint ta limite de fichiers pour aujourd'hui, je n'ai pas pu les regarder 🙈)"
+            )
 
     if skipped:
         notes.append(
             f"(Je n'ai pas pu lire {skipped} fichier(s) : format non pris en charge ou trop lourd.)"
         )
 
-    text = text.strip()[: config.MAX_INPUT_CHARS]
+    text = text.strip()[:config.MAX_INPUT_CHARS]
+
     if not text and media:
         text = "(La personne n'a envoyé que des fichiers, sans texte.)"
+
     if not text:
         text = "(message vide)"
 
     result = await ask_capri(
-        user.id, user.display_name, text, [p for _, p in media], media_note(counts)
+        user.id,
+        user.display_name,
+        text,
+        [p for _, p in media],
+        media_note(counts),
     )
+
     if result is None:
         return [config.ERROR_MESSAGE], None
 
     db.add_usage(user.id, "msg")
+
     if media:
         db.add_usage(user.id, "media", len(media))
 
     file = None
+
     if result.image_prompt.strip():
         input_parts = [p for kind, p in media if kind == "image"]
         file, image_note = await make_image(user, result.image_prompt, input_parts)
@@ -221,16 +250,20 @@ async def build_response(user, text: str, attachments):
             notes.append(image_note)
 
     answer = result.answer
+
     if notes:
         answer += "\n\n" + "\n".join(notes)
+
     return split_message(answer) or [config.ERROR_MESSAGE], file
 
 
 async def send_to_interaction(interaction: discord.Interaction, chunks, file=None):
     for i, chunk in enumerate(chunks):
         kwargs = {"allowed_mentions": NO_PINGS}
+
         if file is not None and i == len(chunks) - 1:
             kwargs["file"] = file
+
         await interaction.followup.send(chunk, **kwargs)
 
 
@@ -246,43 +279,55 @@ async def on_message(message: discord.Message):
     else:
         if bot.user not in message.mentions:
             return
-        channel_ids = [message.channel.id, getattr(message.channel, "parent_id", None)]
+
+        channel_ids = [
+            message.channel.id,
+            getattr(message.channel, "parent_id", None),
+        ]
+
         if not channel_allowed(message.guild.id, channel_ids):
             return
+
         text = re.sub(rf"<@!?{bot.user.id}>", "", message.content)
 
     text = text.strip()
+
     if not text and not message.attachments:
         await message.channel.send(
             "Oui chou ? Je t'écoute 💕",
-            mention_author=False,
             allowed_mentions=NO_PINGS,
         )
         return
 
     user_id = message.author.id
+
     if user_id in _busy_users or too_fast(user_id):
         return
 
     _busy_users.add(user_id)
+
     try:
         if not is_dm and not message.attachments:
             if await moderation.handle_message(message, text, bot.user):
                 return
 
         async with message.channel.typing():
-            chunks, file = await build_response(message.author, text, message.attachments)
+            chunks, file = await build_response(
+                message.author, text, message.attachments
+            )
 
+        # CORRECTION : envoi direct sans référence au message précédent
         for i, chunk in enumerate(chunks):
             kwargs = {"allowed_mentions": NO_PINGS}
+
             if file is not None and i == len(chunks) - 1:
                 kwargs["file"] = file
-            if i == 0:
-                await message.reply(chunk, mention_author=False, **kwargs)
-            else:
-                await message.channel.send(chunk, **kwargs)
+
+            await message.channel.send(chunk, **kwargs)
+
     except discord.HTTPException as e:
         log.warning("Erreur Discord : %s", e)
+
     finally:
         _busy_users.discard(user_id)
 
@@ -304,27 +349,41 @@ async def capri(
     message: str,
     fichier: Optional[discord.Attachment] = None,
 ):
-    channel_ids = [interaction.channel_id, getattr(interaction.channel, "parent_id", None)]
+    channel_ids = [
+        interaction.channel_id,
+        getattr(interaction.channel, "parent_id", None),
+    ]
+
     if not channel_allowed(interaction.guild_id, channel_ids):
         await interaction.response.send_message(
-            "Je ne peux pas parler dans ce salon, chou 🙈", ephemeral=True
+            "Je ne peux pas parler dans ce salon, chou 🙈",
+            ephemeral=True,
         )
         return
 
     user = interaction.user
+
     if user.id in _busy_users or too_fast(user.id):
         await interaction.response.send_message(
-            "Doucement chou, laisse-moi une seconde ⏳", ephemeral=True
+            "Doucement chou, laisse-moi une seconde ⏳",
+            ephemeral=True,
         )
         return
 
     _busy_users.add(user.id)
+
     try:
         await interaction.response.defer(thinking=True)
-        chunks, file = await build_response(user, message, [fichier] if fichier else [])
+
+        chunks, file = await build_response(
+            user, message, [fichier] if fichier else []
+        )
+
         await send_to_interaction(interaction, chunks, file)
+
     except discord.HTTPException as e:
         log.warning("Erreur Discord : %s", e)
+
     finally:
         _busy_users.discard(user.id)
 
@@ -340,41 +399,63 @@ async def image_command(
     description: str,
     image_de_depart: Optional[discord.Attachment] = None,
 ):
-    channel_ids = [interaction.channel_id, getattr(interaction.channel, "parent_id", None)]
+    channel_ids = [
+        interaction.channel_id,
+        getattr(interaction.channel, "parent_id", None),
+    ]
+
     if not channel_allowed(interaction.guild_id, channel_ids):
         await interaction.response.send_message(
-            "Je ne peux pas parler dans ce salon, chou 🙈", ephemeral=True
+            "Je ne peux pas parler dans ce salon, chou 🙈",
+            ephemeral=True,
         )
         return
 
     user = interaction.user
+
     if user.id in _busy_users or too_fast(user.id):
         await interaction.response.send_message(
-            "Doucement chou, laisse-moi une seconde ⏳", ephemeral=True
+            "Doucement chou, laisse-moi une seconde ⏳",
+            ephemeral=True,
         )
         return
 
     _busy_users.add(user.id)
+
     try:
         await interaction.response.defer(thinking=True)
+
         input_parts = []
+
         if image_de_depart:
             media, _, _ = await collect_media([image_de_depart])
             input_parts = [p for kind, p in media if kind == "image"]
 
-        file, note = await make_image(user, description[: config.MAX_INPUT_CHARS], input_parts)
+        file, note = await make_image(
+            user,
+            description[:config.MAX_INPUT_CHARS],
+            input_parts,
+        )
+
         text = "Voilà chou, j'espère que ça te plaît 🎨" if file else note
+
         await send_to_interaction(interaction, [text], file)
+
     except discord.HTTPException as e:
         log.warning("Erreur Discord : %s", e)
+
     finally:
         _busy_users.discard(user.id)
 
 
-@bot.tree.command(name="reset", description="Repartir d'une conversation vierge (je garde tes infos)")
+@bot.tree.command(
+    name="reset",
+    description="Repartir d'une conversation vierge (je garde tes infos)",
+)
 @everywhere
 async def reset(interaction: discord.Interaction):
     db.clear_history(interaction.user.id)
+
     await interaction.response.send_message(
         "C'est fait chou, on repart sur une page blanche ✨\n"
         "(Je garde quand même ce que je sais sur toi. Utilise `/oublie` pour en supprimer.)",
@@ -382,27 +463,45 @@ async def reset(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="memoire", description="Voir ce que Capri a retenu sur toi")
+@bot.tree.command(
+    name="memoire",
+    description="Voir ce que Capri a retenu sur toi",
+)
 @everywhere
 async def memoire(interaction: discord.Interaction):
     facts = db.get_facts(interaction.user.id)
+
     if not facts:
         await interaction.response.send_message(
-            "Je ne sais encore rien sur toi chou, raconte-moi tout ! 💕", ephemeral=True
+            "Je ne sais encore rien sur toi chou, raconte-moi tout ! 💕",
+            ephemeral=True,
         )
         return
 
-    lines = "\n".join(f"{i}. {fact}" for i, fact in enumerate(facts, start=1))
+    lines = "\n".join(
+        f"{i}. {fact}" for i, fact in enumerate(facts, start=1)
+    )
+
     embed = discord.Embed(
         title="🧠 Ce que je sais sur toi",
         description=lines[:4000],
         color=discord.Color.pink(),
     )
-    embed.set_footer(text="Utilise /oublie pour supprimer une information.")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    embed.set_footer(
+        text="Utilise /oublie pour supprimer une information."
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True,
+    )
 
 
-@bot.tree.command(name="oublie", description="Faire oublier une information à Capri")
+@bot.tree.command(
+    name="oublie",
+    description="Faire oublier une information à Capri",
+)
 @everywhere
 @app_commands.describe(information="L'information à oublier")
 async def oublie(interaction: discord.Interaction, information: str):
@@ -410,21 +509,33 @@ async def oublie(interaction: discord.Interaction, information: str):
 
     if status == "deleted":
         msg = f"C'est oublié chou ✨ (« {fact} »)"
+
     elif status == "ambiguous":
         msg = (
             "Plusieurs infos correspondent 🤔 Choisis-en une dans la liste "
             "qui apparaît quand tu écris, ou sois plus précis."
         )
-    else:
-        msg = "Je n'ai rien trouvé qui corresponde. Regarde avec `/memoire` 🔍"
 
-    await interaction.response.send_message(msg, ephemeral=True)
+    else:
+        msg = (
+            "Je n'ai rien trouvé qui corresponde. "
+            "Regarde avec `/memoire` 🔍"
+        )
+
+    await interaction.response.send_message(
+        msg,
+        ephemeral=True,
+    )
 
 
 @oublie.autocomplete("information")
-async def oublie_autocomplete(interaction: discord.Interaction, current: str):
+async def oublie_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+):
     current = current.lower()
     facts = db.get_facts(interaction.user.id)
+
     return [
         app_commands.Choice(name=fact[:100], value=fact[:100])
         for fact in facts
@@ -440,15 +551,17 @@ async def help_command(interaction: discord.Interaction):
         description="Je suis ta compagne de discussion préférée !",
         color=discord.Color.pink(),
     )
+
     embed.add_field(
         name="Me parler",
         value=(
             "• En **message privé** : écris-moi directement, sans commande\n"
-            "• Sur un serveur : **mentionne-moi** (@Capri) ou utilise `/capri`\n"
+            "• Sur un serveur : **mentionne-moi (@Capri)** ou utilise `/capri`\n"
             "• Tu peux m'envoyer des **images, vidéos et messages vocaux** 🎧"
         ),
         inline=False,
     )
+
     embed.add_field(
         name="Commandes",
         value=(
@@ -464,6 +577,7 @@ async def help_command(interaction: discord.Interaction):
         ),
         inline=False,
     )
+
     embed.add_field(
         name="Modération (si activée par un admin)",
         value=(
@@ -474,7 +588,11 @@ async def help_command(interaction: discord.Interaction):
         ),
         inline=False,
     )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True,
+    )
 
 
 salons = app_commands.Group(
@@ -486,54 +604,95 @@ salons = app_commands.Group(
 
 
 def _is_admin(interaction: discord.Interaction) -> bool:
-    return interaction.permissions.manage_guild or interaction.permissions.administrator
+    return (
+        interaction.permissions.manage_guild
+        or interaction.permissions.administrator
+    )
 
 
 async def _refuse(interaction: discord.Interaction):
     await interaction.response.send_message(
-        "Seuls les admins du serveur peuvent faire ça chou 🙈", ephemeral=True
+        "Seuls les admins du serveur peuvent faire ça chou 🙈",
+        ephemeral=True,
     )
 
 
-@salons.command(name="ajouter", description="Autoriser Capri à répondre dans un salon")
+@salons.command(
+    name="ajouter",
+    description="Autoriser Capri à répondre dans un salon",
+)
 @app_commands.describe(salon="Le salon à autoriser")
-async def salons_ajouter(interaction: discord.Interaction, salon: discord.TextChannel):
+async def salons_ajouter(
+    interaction: discord.Interaction,
+    salon: discord.TextChannel,
+):
     if not _is_admin(interaction):
         return await _refuse(interaction)
+
     db.add_allowed_channel(interaction.guild_id, salon.id)
+
     await interaction.response.send_message(
-        f"C'est noté chou : je réponds maintenant dans {salon.mention} ✅", ephemeral=True
+        f"C'est noté chou : je réponds maintenant dans {salon.mention} ✅",
+        ephemeral=True,
     )
 
 
-@salons.command(name="retirer", description="Retirer un salon de la liste")
+@salons.command(
+    name="retirer",
+    description="Retirer un salon de la liste",
+)
 @app_commands.describe(salon="Le salon à retirer")
-async def salons_retirer(interaction: discord.Interaction, salon: discord.TextChannel):
+async def salons_retirer(
+    interaction: discord.Interaction,
+    salon: discord.TextChannel,
+):
     if not _is_admin(interaction):
         return await _refuse(interaction)
+
     db.remove_allowed_channel(interaction.guild_id, salon.id)
+
     await interaction.response.send_message(
-        f"{salon.mention} retiré de la liste ✅", ephemeral=True
+        f"{salon.mention} retiré de la liste ✅",
+        ephemeral=True,
     )
 
 
-@salons.command(name="liste", description="Voir les salons autorisés")
+@salons.command(
+    name="liste",
+    description="Voir les salons autorisés",
+)
 async def salons_liste(interaction: discord.Interaction):
     allowed = db.get_allowed_channels(interaction.guild_id)
+
     if not allowed:
-        msg = "Aucun salon n'est configuré : je peux répondre partout (quand on me mentionne) 💕"
+        msg = (
+            "Aucun salon n'est configuré : je peux répondre partout "
+            "(quand on me mentionne) 💕"
+        )
     else:
-        msg = "Je réponds dans : " + ", ".join(f"<#{c}>" for c in allowed)
-    await interaction.response.send_message(msg, ephemeral=True)
+        msg = "Je réponds dans : " + ", ".join(
+            f"<#{c}>" for c in allowed
+        )
+
+    await interaction.response.send_message(
+        msg,
+        ephemeral=True,
+    )
 
 
-@salons.command(name="tous", description="Autoriser tous les salons (efface la liste)")
+@salons.command(
+    name="tous",
+    description="Autoriser tous les salons (efface la liste)",
+)
 async def salons_tous(interaction: discord.Interaction):
     if not _is_admin(interaction):
         return await _refuse(interaction)
+
     db.clear_allowed_channels(interaction.guild_id)
+
     await interaction.response.send_message(
-        "Parfait, je peux maintenant répondre dans tous les salons ✅", ephemeral=True
+        "Parfait, je peux maintenant répondre dans tous les salons ✅",
+        ephemeral=True,
     )
 
 
@@ -542,8 +701,14 @@ bot.tree.add_command(moderation.group)
 
 
 if not config.DISCORD_TOKEN:
-    raise SystemExit("❌ DISCORD_TOKEN introuvable. Vérifie ton fichier .env")
+    raise SystemExit(
+        "❌ DISCORD_TOKEN introuvable. Vérifie ton fichier .env"
+    )
+
 if not config.GEMINI_API_KEY:
-    raise SystemExit("❌ GEMINI_API_KEY introuvable. Vérifie ton fichier .env")
+    raise SystemExit(
+        "❌ GEMINI_API_KEY introuvable. Vérifie ton fichier .env"
+    )
+
 
 bot.run(config.DISCORD_TOKEN)
