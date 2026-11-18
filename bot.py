@@ -253,7 +253,7 @@ async def on_message(message: discord.Message):
 
     text = text.strip()
     if not text and not message.attachments:
-        await message.reply(
+        await message.channel.send(
             "Oui chou ? Je t'écoute 💕",
             mention_author=False,
             allowed_mentions=NO_PINGS,
